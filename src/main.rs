@@ -4,6 +4,9 @@ extern crate serde;
 extern crate serde_derive;
 extern crate chrono;
 extern crate csv;
+extern crate serde_json;
+
+use std::collections::HashMap;
 
 #[derive(Debug)]
 struct Config {
@@ -55,6 +58,15 @@ struct Input {
     source: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct Hotel {
+    id: String,
+    city_code: String,
+    name: String,
+    category: f32,
+    city: String,
+}
+
 #[derive(Debug, Serialize)]
 struct Output {
     #[serde(rename = "room_type meal")]
@@ -64,13 +76,13 @@ struct Output {
     hotel_name: String,
     city_name: String,
     city_code: String,
-    hotel_category: String,
+    hotel_category: String, // Could be f32, but this way is easier to handle proper precision
     pax: String,
     adults: u32,
     children: u32,
     room_name: String,
     checkin: chrono::NaiveDate,
-    checkout: String,
+    checkout: chrono::NaiveDate,
     #[serde(serialize_with = "serialize_price")]
     price: f32,
 }
@@ -90,7 +102,7 @@ impl Output {
             children: input.children,
             room_name: "".into(), // TODO: find this
             checkin: input.checkin,
-            checkout: "".into(), // TODO: calculate this
+            checkout: input.checkin.succ(),
             price: input.price / (input.adults + input.children) as f32,
         }
     }
@@ -131,6 +143,30 @@ impl Config {
     }
 }
 
+fn prepare_hotels<R>(read: R) -> HashMap<String, Hotel>
+where
+    R: std::io::Read,
+{
+    use std::io::BufRead;
+
+    let read = std::io::BufReader::new(read);
+    read.lines()
+        .filter_map(|line| {
+            line.map_err(|e| println!("While reading hotel file: {}", e))
+                .ok()
+        })
+        .filter_map(|line| {
+            serde_json::from_str(&line)
+                .map_err(|e| println!("Ignoring invalid hotel entry: {} ({})", &line, e))
+                .ok()
+        })
+        .map(|item: Hotel| {
+            println!("Input hotel: {:?}", item);
+            (item.id.clone(), item)
+        })
+        .collect()
+}
+
 fn process_input<R>(read: R) -> impl Iterator<Item = Output>
 where
     R: std::io::Read,
@@ -138,15 +174,17 @@ where
     // csv::Reader is internally buffered so it's safe even for big inputs
     let reader = csv::ReaderBuilder::new().delimiter(b'|').from_reader(read);
 
-    reader.into_deserialize::<Input>().filter_map(|input| {
-        input
-            .map_err(|e| println!("Ignoring invalid line: {}", e))
-            .ok()
-            .map(|item| {
-                println!("Input item: {:?}", item);
-                Output::new(item)
-            })
-    })
+    reader
+        .into_deserialize::<Input>()
+        .filter_map(|input| {
+            input
+                .map_err(|e| println!("Ignoring invalid line: {}", e))
+                .ok()
+        })
+        .map(|item| {
+            println!("Input item: {:?}", item);
+            Output::new(item)
+        })
 }
 
 fn store_output<W, I>(write: W, iter: I)
@@ -181,7 +219,10 @@ fn main() {
 
     let input_file = std::fs::File::open(&config.input_path).expect("Cannot open input file");
     let output_file = std::fs::File::create(&config.output_path).expect("Cannot open output file");
+    let hotels_file = std::fs::File::open(&config.hotels_path).expect("Cannot open hotels file");
 
     let processed = process_input(input_file);
+    let hotels = prepare_hotels(hotels_file);
+    println!("Hotels: {:?}", hotels);
     store_output(output_file, processed);
 }
