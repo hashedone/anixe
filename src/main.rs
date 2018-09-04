@@ -1,4 +1,5 @@
 extern crate argparse;
+extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate csv;
@@ -8,6 +9,18 @@ struct Config {
     input_path: String,
     output_path: String,
     hotels_path: String,
+}
+
+fn serialize_price<S>(price: &f32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    // Just fancy rounding to 2 decimal places
+    let fpval = (price * 100.0).round();
+    let s = format!("{}", fpval);
+    let (l, r) = s.split_at(s.len() - 2);
+    let s = format!("{}.{}", l, r);
+    serializer.serialize_str(&s)
 }
 
 /* Some fields could possibly be some less heavy types, but as long as this is only
@@ -22,9 +35,9 @@ struct Input {
     room_code: String,
     meal: String,
     checkin: String,
-    adults: String,
-    children: String,
-    price: String,
+    adults: u32,
+    children: u32,
+    price: f32,
     source: String,
 }
 
@@ -39,12 +52,13 @@ struct Output {
     city_code: String,
     hotel_category: String,
     pax: String,
-    adults: String,
-    children: String,
+    adults: u32,
+    children: u32,
     room_name: String,
     checkin: String,
     checkout: String,
-    price: String,
+    #[serde(serialize_with = "serialize_price")]
+    price: f32,
 }
 
 impl Output {
@@ -63,7 +77,7 @@ impl Output {
             room_name: "".into(), // TODO: find this
             checkin: input.checkin,
             checkout: "".into(), // TODO: calculate this
-            price: "".into(),    // TODO: calculate this
+            price: input.price / (input.adults + input.children) as f32,
         }
     }
 }
@@ -136,12 +150,15 @@ where
             .unwrap_or_else(|e| println!("Cannot serialize item: {}", e));
     }
 
-    writer.flush().unwrap_or_else(|e| {
-        println!(
-            "Cannot flush file, output may be incomplete or corrupted: {}",
-            e
-        )
-    });
+    writer
+        .into_inner()
+        .map_err(|e| {
+            println!(
+                "Cannot flush file, output may be incomplete or corrupted: {}",
+                e
+            )
+        })
+        .ok();
 }
 
 fn main() {
