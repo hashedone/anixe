@@ -61,7 +61,6 @@ struct Input {
 #[derive(Debug, Deserialize)]
 struct Hotel {
     id: String,
-    city_code: String,
     name: String,
     category: f32,
     city: String,
@@ -88,15 +87,15 @@ struct Output {
 }
 
 impl Output {
-    fn new(input: Input) -> Self {
+    fn new(input: Input, hotel: &Hotel) -> Self {
         Output {
             room_type_with_meal: format!("{} {}", input.room_type, input.meal),
             room_code: input.room_code,
             source: input.source,
-            hotel_name: "".into(), // TODO: find this
-            city_name: "".into(),  // TODO: find this
+            hotel_name: hotel.name.clone(),
+            city_name: hotel.city.clone(),
             city_code: input.city_code,
-            hotel_category: "".into(), // TODO: find this
+            hotel_category: format!("{:.2}", hotel.category),
             pax: "".into(),            // TODO: find this
             adults: input.adults,
             children: input.children,
@@ -167,7 +166,7 @@ where
         .collect()
 }
 
-fn process_input<R>(read: R) -> impl Iterator<Item = Output>
+fn process_input<R>(read: R, hotels: HashMap<String, Hotel>) -> impl Iterator<Item = Output>
 where
     R: std::io::Read,
 {
@@ -181,9 +180,14 @@ where
                 .map_err(|e| println!("Ignoring invalid line: {}", e))
                 .ok()
         })
-        .map(|item| {
+        .filter_map(move |item| {
             println!("Input item: {:?}", item);
-            Output::new(item)
+            hotels.get(&item.hotel_code)
+                .or_else(|| {
+                    println!("No hotel with id {}, ignoring entry", item.hotel_code);
+                    None
+                })
+                .map(move |hotel| Output::new(item, hotel))
         })
 }
 
@@ -221,8 +225,8 @@ fn main() {
     let output_file = std::fs::File::create(&config.output_path).expect("Cannot open output file");
     let hotels_file = std::fs::File::open(&config.hotels_path).expect("Cannot open hotels file");
 
-    let processed = process_input(input_file);
     let hotels = prepare_hotels(hotels_file);
     println!("Hotels: {:?}", hotels);
+    let processed = process_input(input_file, hotels);
     store_output(output_file, processed);
 }
