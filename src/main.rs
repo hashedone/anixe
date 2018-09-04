@@ -8,7 +8,6 @@ extern crate serde_json;
 
 use std::collections::HashMap;
 
-#[derive(Debug)]
 struct Config {
     input_path: String,
     output_path: String,
@@ -44,7 +43,7 @@ where
  * copying of data, it is possibly better to keep everything as strings so no
  * serialization/deserialization is needed (excepts fields used in some tranformations) */
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct Input {
     city_code: String,
     hotel_code: String,
@@ -59,7 +58,7 @@ struct Input {
     source: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct Hotel {
     id: String,
     name: String,
@@ -67,7 +66,7 @@ struct Hotel {
     city: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct RoomName {
     hotel_code: String,
     source: String,
@@ -77,14 +76,14 @@ struct RoomName {
 
 // It would be better to do some tricks with Cow Strings, to avoid copying, but this is this way
 // just because of simplicity unless this is serious, profiled issue
-#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+#[derive(Hash, PartialEq, Eq, Clone)]
 struct RoomKey {
     hotel_code: String,
     source: String,
     room_code: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct Output {
     #[serde(rename = "room_type meal")]
     room_type_with_meal: String, // Probably better split those and create custom serialized, but this is way simpler
@@ -184,10 +183,7 @@ where
                 .map_err(|e| println!("Ignoring invalid hotel entry: {} ({})", &line, e))
                 .ok()
         })
-        .map(|item: Hotel| {
-            println!("Input hotel: {:?}", item);
-            (item.id.clone(), item)
-        })
+        .map(|item: Hotel| (item.id.clone(), item))
         .collect()
 }
 
@@ -195,16 +191,19 @@ fn prepare_room_names<R>(read: R) -> HashMap<RoomKey, String>
 where
     R: std::io::Read,
 {
-    let reader = csv::ReaderBuilder::new().delimiter(b'|').has_headers(false).from_reader(read);
+    let reader = csv::ReaderBuilder::new()
+        .delimiter(b'|')
+        .has_headers(false)
+        .from_reader(read);
 
-    reader.into_deserialize::<RoomName>()
+    reader
+        .into_deserialize::<RoomName>()
         .filter_map(|input| {
             input
                 .map_err(|e| println!("Ignoring invalid line: {}", e))
                 .ok()
         })
         .map(|item| {
-            println!("Room: {:?}", item);
             let key = RoomKey {
                 hotel_code: item.hotel_code,
                 source: item.source,
@@ -215,7 +214,11 @@ where
         .collect()
 }
 
-fn process_input<R>(read: R, hotels: HashMap<String, Hotel>, room_names: HashMap<RoomKey, String>) -> impl Iterator<Item = Output>
+fn process_input<R>(
+    read: R,
+    hotels: HashMap<String, Hotel>,
+    room_names: HashMap<RoomKey, String>,
+) -> impl Iterator<Item = Output>
 where
     R: std::io::Read,
 {
@@ -230,22 +233,23 @@ where
                 .ok()
         })
         .filter_map(move |item| {
-            let hotel = hotels.get(&item.hotel_code)
-                .or_else(|| {
-                    println!("No hotel with id {}, ignoring entry", item.hotel_code);
-                    None
-                });
+            let hotel = hotels.get(&item.hotel_code).or_else(|| {
+                println!("No hotel with id {}, ignoring entry", item.hotel_code);
+                None
+            });
 
             let room_key = RoomKey {
                 hotel_code: item.hotel_code.clone(),
                 source: item.source.clone(),
                 room_code: item.room_code.clone(),
             };
-            let room = room_names.get(&room_key)
-                .or_else(|| {
-                    println!("No room with id {}/{}, ignoring entry", item.hotel_code, item.room_code);
-                    None
-                });
+            let room = room_names.get(&room_key).or_else(|| {
+                println!(
+                    "No room with id {}/{}, ignoring entry",
+                    item.hotel_code, item.room_code
+                );
+                None
+            });
 
             hotel.and_then(move |hotel| room.map(move |room| (hotel, room))) // Just zipping Options
                 .map(move |(hotel, room)| Output::new(item, hotel, room.clone()))
@@ -261,7 +265,6 @@ where
     let mut writer = csv::WriterBuilder::new().delimiter(b';').from_writer(write);
 
     for item in iter {
-        println!("Out item: {:?}", &item);
         writer
             .serialize(item)
             .unwrap_or_else(|e| println!("Cannot serialize item: {}", e));
@@ -280,7 +283,6 @@ where
 
 fn main() {
     let config = Config::parse();
-    println!("Using config: {:?}", config);
 
     let input_file = std::fs::File::open(&config.input_path).expect("Cannot open input file");
     let output_file = std::fs::File::create(&config.output_path).expect("Cannot open output file");
@@ -288,9 +290,7 @@ fn main() {
     let rooms_file = std::fs::File::open(&config.rooms_path).expect("Cannto opent rooms file");
 
     let hotels = prepare_hotels(hotels_file);
-    println!("Hotels: {:?}", hotels);
     let rooms = prepare_room_names(rooms_file);
-    println!("Rooms: {:?}", rooms);
     let processed = process_input(input_file, hotels, rooms);
     store_output(output_file, processed);
 }
