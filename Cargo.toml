@@ -1,6 +1,10 @@
 [package]
 name = "anixe"
 version = "0.1.0"
-authors = ["Bartłomiej Kuras <hash.deb@gmail.com>"]
+authors = ["Bartłomiej Kuras <bartlomiej.kuras@o2.pl>"]
 
 [dependencies]
+argparse = "0.2.0"
+serde = "1"
+serde_derive = "1"
+csv = "1"
