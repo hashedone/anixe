@@ -6,6 +6,7 @@ extern crate csv;
 #[derive(Debug)]
 struct Config {
     input_path: String,
+    output_path: String,
     hotels_path: String,
 }
 
@@ -46,9 +47,31 @@ struct Output {
     price: String,
 }
 
+impl Output {
+    fn new(input: Input) -> Self {
+        Output {
+            room_type_with_meal: format!("{} {}", input.room_type, input.meal),
+            room_code: input.room_code,
+            source: input.source,
+            hotel_name: "".into(), // TODO: find this
+            city_name: "".into(), // TODO: find this
+            city_code: input.city_code,
+            hotel_category: "".into(), // TODO: find this
+            pax: "".into(), // TODO: find this
+            adults: input.adults,
+            children: input.children,
+            room_name: "".into(), // TODO: find this
+            checkin: input.checkin,
+            checkout: "".into(), // TODO: calculate this
+            price: "".into(), // TODO: calculate this
+        }
+    }
+}
+
 impl Config {
     fn parse() -> Self {
         let mut input_path: String = "input.csv".into();
+        let mut output_path: String = "output.csv".into();
         let mut hotels_path: String = "hotels.json".into();
         {
             use argparse::{ArgumentParser, Store};
@@ -58,6 +81,8 @@ impl Config {
 
             ap.refer(&mut input_path)
                 .add_option(&["-i", "--input"], Store, "Path to input file");
+            ap.refer(&mut output_path)
+                .add_option(&["-o", "--output"], Store, "Path to output file");
             ap.refer(&mut hotels_path)
                 .add_option(&["-t", "--hotels"], Store, "Path to addidional hotels info file");
 
@@ -66,32 +91,53 @@ impl Config {
 
         Config {
             input_path,
+            output_path,
             hotels_path,
         }
     }
 }
 
-fn process_input<R>(read: R) where R: std::io::Read {
+fn process_input<R>(read: R) -> impl Iterator<Item=Output> where R: std::io::Read {
     // csv::Reader is internally buffered so it's safe even for big inputs
-    let mut reader = csv::ReaderBuilder::new()
+    let reader = csv::ReaderBuilder::new()
         .delimiter(b'|')
         .from_reader(read);
 
-    let items = reader
+    reader
         .into_deserialize::<Input>()
         .filter_map(|input| {
             input.map_err(|e| println!("Ignoring invalid line: {}", e))
                 .ok()
-        });
+                .map(|item| {
+                    println!("Input item: {:?}", item);
+                    Output::new(item)
+                })
+        })
+}
 
-    for item in items {
-        println!("Input item: {:?}", item);
+fn store_output<W, I>(write: W, iter: I) where W: std::io::Write, I: IntoIterator<Item=Output> {
+    // csv::Writer is internally buffered so it's safe even for big outputs
+    let mut writer = csv::WriterBuilder::new()
+        .delimiter(b';')
+        .from_writer(write);
+
+    for item in iter {
+        println!("Out item: {:?}", &item);
+        writer.serialize(item)
+            .unwrap_or_else(|e| println!("Cannot serialize item: {}", e));
     }
+
+    writer.flush()
+        .unwrap_or_else(|e| println!("Cannot flush file, output may be incomplete or corrupted: {}", e));
 }
 
 fn main() {
     let config = Config::parse();
     println!("Using config: {:?}", config);
 
-    process_input(std::fs::File::open(&config.input_path).expect("Cannot open input file"));
+    let input_file = std::fs::File::open(&config.input_path).expect("Cannot open input file");
+    let output_file = std::fs::File::create(&config.output_path).expect("Cannot open output file");
+
+    let processed = process_input(input_file);
+    store_output(output_file, processed);
 }
