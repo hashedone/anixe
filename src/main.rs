@@ -13,6 +13,7 @@ struct Config {
     input_path: String,
     output_path: String,
     hotels_path: String,
+    rooms_path: String,
 }
 
 fn serialize_price<S>(price: &f32, serializer: S) -> Result<S::Ok, S::Error>
@@ -66,6 +67,23 @@ struct Hotel {
     city: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct RoomName {
+    hotel_code: String,
+    source: String,
+    room_name: String,
+    room_code: String,
+}
+
+// It would be better to do some tricks with Cow Strings, to avoid copying, but this is this way
+// just because of simplicity unless this is serious, profiled issue
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+struct RoomKey {
+    hotel_code: String,
+    source: String,
+    room_code: String,
+}
+
 #[derive(Debug, Serialize)]
 struct Output {
     #[serde(rename = "room_type meal")]
@@ -76,7 +94,7 @@ struct Output {
     city_name: String,
     city_code: String,
     hotel_category: String, // Could be f32, but this way is easier to handle proper precision
-    pax: String,
+    pax: u32,
     adults: u32,
     children: u32,
     room_name: String,
@@ -87,7 +105,7 @@ struct Output {
 }
 
 impl Output {
-    fn new(input: Input, hotel: &Hotel) -> Self {
+    fn new(input: Input, hotel: &Hotel, room_name: String) -> Self {
         Output {
             room_type_with_meal: format!("{} {}", input.room_type, input.meal),
             room_code: input.room_code,
@@ -95,11 +113,11 @@ impl Output {
             hotel_name: hotel.name.clone(),
             city_name: hotel.city.clone(),
             city_code: input.city_code,
-            hotel_category: format!("{:.2}", hotel.category),
-            pax: "".into(),            // TODO: find this
+            hotel_category: format!("{:.1}", hotel.category),
+            pax: input.adults + input.children,
             adults: input.adults,
             children: input.children,
-            room_name: "".into(), // TODO: find this
+            room_name: room_name,
             checkin: input.checkin,
             checkout: input.checkin.succ(),
             price: input.price / (input.adults + input.children) as f32,
@@ -112,6 +130,7 @@ impl Config {
         let mut input_path: String = "input.csv".into();
         let mut output_path: String = "output.csv".into();
         let mut hotels_path: String = "hotels.json".into();
+        let mut rooms_path: String = "room_names.csv".into();
         {
             use argparse::{ArgumentParser, Store};
 
@@ -130,6 +149,11 @@ impl Config {
                 Store,
                 "Path to addidional hotels info file",
             );
+            ap.refer(&mut rooms_path).add_option(
+                &["-r", "--rooms"],
+                Store,
+                "Path to additional rooms info file",
+            );
 
             ap.parse_args_or_exit();
         }
@@ -138,6 +162,7 @@ impl Config {
             input_path,
             output_path,
             hotels_path,
+            rooms_path,
         }
     }
 }
@@ -166,7 +191,31 @@ where
         .collect()
 }
 
-fn process_input<R>(read: R, hotels: HashMap<String, Hotel>) -> impl Iterator<Item = Output>
+fn prepare_room_names<R>(read: R) -> HashMap<RoomKey, String>
+where
+    R: std::io::Read,
+{
+    let reader = csv::ReaderBuilder::new().delimiter(b'|').has_headers(false).from_reader(read);
+
+    reader.into_deserialize::<RoomName>()
+        .filter_map(|input| {
+            input
+                .map_err(|e| println!("Ignoring invalid line: {}", e))
+                .ok()
+        })
+        .map(|item| {
+            println!("Room: {:?}", item);
+            let key = RoomKey {
+                hotel_code: item.hotel_code,
+                source: item.source,
+                room_code: item.room_code,
+            };
+            (key, item.room_name)
+        })
+        .collect()
+}
+
+fn process_input<R>(read: R, hotels: HashMap<String, Hotel>, room_names: HashMap<RoomKey, String>) -> impl Iterator<Item = Output>
 where
     R: std::io::Read,
 {
@@ -181,13 +230,25 @@ where
                 .ok()
         })
         .filter_map(move |item| {
-            println!("Input item: {:?}", item);
-            hotels.get(&item.hotel_code)
+            let hotel = hotels.get(&item.hotel_code)
                 .or_else(|| {
                     println!("No hotel with id {}, ignoring entry", item.hotel_code);
                     None
-                })
-                .map(move |hotel| Output::new(item, hotel))
+                });
+
+            let room_key = RoomKey {
+                hotel_code: item.hotel_code.clone(),
+                source: item.source.clone(),
+                room_code: item.room_code.clone(),
+            };
+            let room = room_names.get(&room_key)
+                .or_else(|| {
+                    println!("No room with id {}/{}, ignoring entry", item.hotel_code, item.room_code);
+                    None
+                });
+
+            hotel.and_then(move |hotel| room.map(move |room| (hotel, room))) // Just zipping Options
+                .map(move |(hotel, room)| Output::new(item, hotel, room.clone()))
         })
 }
 
@@ -224,9 +285,12 @@ fn main() {
     let input_file = std::fs::File::open(&config.input_path).expect("Cannot open input file");
     let output_file = std::fs::File::create(&config.output_path).expect("Cannot open output file");
     let hotels_file = std::fs::File::open(&config.hotels_path).expect("Cannot open hotels file");
+    let rooms_file = std::fs::File::open(&config.rooms_path).expect("Cannto opent rooms file");
 
     let hotels = prepare_hotels(hotels_file);
     println!("Hotels: {:?}", hotels);
-    let processed = process_input(input_file, hotels);
+    let rooms = prepare_room_names(rooms_file);
+    println!("Rooms: {:?}", rooms);
+    let processed = process_input(input_file, hotels, rooms);
     store_output(output_file, processed);
 }
