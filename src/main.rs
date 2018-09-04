@@ -2,6 +2,7 @@ extern crate argparse;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
+extern crate chrono;
 extern crate csv;
 
 #[derive(Debug)]
@@ -23,6 +24,18 @@ where
     serializer.serialize_str(&s)
 }
 
+fn deserialize_checkin<'a, D>(deserializer: D) -> Result<chrono::NaiveDate, D::Error>
+where
+    D: serde::Deserializer<'a>,
+{
+    use serde::de::Error;
+    use serde::Deserialize;
+
+    let val = String::deserialize(deserializer)?;
+    chrono::NaiveDate::parse_from_str(&val, "%Y%m%d")
+        .map_err(|e| D::Error::custom(format!("Expected date in format %Y%m%d: {}", e)))
+}
+
 /* Some fields could possibly be some less heavy types, but as long as this is only
  * copying of data, it is possibly better to keep everything as strings so no
  * serialization/deserialization is needed (excepts fields used in some tranformations) */
@@ -34,7 +47,8 @@ struct Input {
     room_type: String,
     room_code: String,
     meal: String,
-    checkin: String,
+    #[serde(deserialize_with = "deserialize_checkin")]
+    checkin: chrono::NaiveDate,
     adults: u32,
     children: u32,
     price: f32,
@@ -55,7 +69,7 @@ struct Output {
     adults: u32,
     children: u32,
     room_name: String,
-    checkin: String,
+    checkin: chrono::NaiveDate,
     checkout: String,
     #[serde(serialize_with = "serialize_price")]
     price: f32,
