@@ -54,16 +54,16 @@ impl Output {
             room_code: input.room_code,
             source: input.source,
             hotel_name: "".into(), // TODO: find this
-            city_name: "".into(), // TODO: find this
+            city_name: "".into(),  // TODO: find this
             city_code: input.city_code,
             hotel_category: "".into(), // TODO: find this
-            pax: "".into(), // TODO: find this
+            pax: "".into(),            // TODO: find this
             adults: input.adults,
             children: input.children,
             room_name: "".into(), // TODO: find this
             checkin: input.checkin,
             checkout: "".into(), // TODO: calculate this
-            price: "".into(), // TODO: calculate this
+            price: "".into(),    // TODO: calculate this
         }
     }
 }
@@ -81,10 +81,16 @@ impl Config {
 
             ap.refer(&mut input_path)
                 .add_option(&["-i", "--input"], Store, "Path to input file");
-            ap.refer(&mut output_path)
-                .add_option(&["-o", "--output"], Store, "Path to output file");
-            ap.refer(&mut hotels_path)
-                .add_option(&["-t", "--hotels"], Store, "Path to addidional hotels info file");
+            ap.refer(&mut output_path).add_option(
+                &["-o", "--output"],
+                Store,
+                "Path to output file",
+            );
+            ap.refer(&mut hotels_path).add_option(
+                &["-t", "--hotels"],
+                Store,
+                "Path to addidional hotels info file",
+            );
 
             ap.parse_args_or_exit();
         }
@@ -97,38 +103,45 @@ impl Config {
     }
 }
 
-fn process_input<R>(read: R) -> impl Iterator<Item=Output> where R: std::io::Read {
+fn process_input<R>(read: R) -> impl Iterator<Item = Output>
+where
+    R: std::io::Read,
+{
     // csv::Reader is internally buffered so it's safe even for big inputs
-    let reader = csv::ReaderBuilder::new()
-        .delimiter(b'|')
-        .from_reader(read);
+    let reader = csv::ReaderBuilder::new().delimiter(b'|').from_reader(read);
 
-    reader
-        .into_deserialize::<Input>()
-        .filter_map(|input| {
-            input.map_err(|e| println!("Ignoring invalid line: {}", e))
-                .ok()
-                .map(|item| {
-                    println!("Input item: {:?}", item);
-                    Output::new(item)
-                })
-        })
+    reader.into_deserialize::<Input>().filter_map(|input| {
+        input
+            .map_err(|e| println!("Ignoring invalid line: {}", e))
+            .ok()
+            .map(|item| {
+                println!("Input item: {:?}", item);
+                Output::new(item)
+            })
+    })
 }
 
-fn store_output<W, I>(write: W, iter: I) where W: std::io::Write, I: IntoIterator<Item=Output> {
+fn store_output<W, I>(write: W, iter: I)
+where
+    W: std::io::Write,
+    I: IntoIterator<Item = Output>,
+{
     // csv::Writer is internally buffered so it's safe even for big outputs
-    let mut writer = csv::WriterBuilder::new()
-        .delimiter(b';')
-        .from_writer(write);
+    let mut writer = csv::WriterBuilder::new().delimiter(b';').from_writer(write);
 
     for item in iter {
         println!("Out item: {:?}", &item);
-        writer.serialize(item)
+        writer
+            .serialize(item)
             .unwrap_or_else(|e| println!("Cannot serialize item: {}", e));
     }
 
-    writer.flush()
-        .unwrap_or_else(|e| println!("Cannot flush file, output may be incomplete or corrupted: {}", e));
+    writer.flush().unwrap_or_else(|e| {
+        println!(
+            "Cannot flush file, output may be incomplete or corrupted: {}",
+            e
+        )
+    });
 }
 
 fn main() {
